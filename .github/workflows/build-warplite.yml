@@ -1,5 +1,8 @@
 name: Build WarpLite from GitLab
 
+permissions:
+  contents: write
+
 on:
   repository_dispatch:
     types: [build-warplite]
@@ -43,6 +46,8 @@ jobs:
             git fetch --depth 1 origin "$GITLAB_SHA"
             git checkout --force "$GITLAB_SHA"
           fi
+          echo "SOURCE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "SOURCE_SHA_SHORT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
           echo "Building $(git rev-parse --short HEAD) ($(git log -1 --pretty=%s))"
 
       - name: Install build dependencies and pull LFS
@@ -74,9 +79,7 @@ jobs:
 
       - name: Release build
         working-directory: src
-        run: |
-          cargo check -p warp --bin warp-oss
-          cargo build --release --bin warp-oss
+        run: cargo build --release --bin warp-oss
 
       - name: Bundle WarpLite.app and DMG
         working-directory: src
@@ -98,12 +101,19 @@ jobs:
             src/WarpLite.dmg
           if-no-files-found: error
           retention-days: 14
+
       - name: Checksums
         working-directory: src
         run: |
           shasum -a 256 WarpLite.app.zip WarpLite.dmg | tee checksums.txt
           {
-            echo "SHA256:"
+            echo "## WarpLite CI build"
+            echo
+            echo "- GitLab ref: \`${GITLAB_REF}\`"
+            echo "- GitLab SHA: \`${SOURCE_SHA}\`"
+            echo "- GitHub run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "### SHA256"
             echo '```'
             cat checksums.txt
             echo '```'
@@ -112,8 +122,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: warplite-${{ github.run_number }}-${{ github.run_id }}
-          name: WarpLite build ${{ github.run_number }}
+          tag_name: warplite-${{ github.run_number }}-${{ env.SOURCE_SHA_SHORT }}
+          name: WarpLite ${{ env.GITLAB_REF }} (${{ env.SOURCE_SHA_SHORT }})
           body_path: src/release-body.md
           files: |
             src/WarpLite.app.zip
