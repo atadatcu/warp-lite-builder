@@ -45,12 +45,13 @@ jobs:
           fi
           echo "Building $(git rev-parse --short HEAD) ($(git log -1 --pretty=%s))"
 
-      - name: Install git-lfs and pull LFS
+      - name: Install build dependencies and pull LFS
         working-directory: src
         run: |
-          brew install git-lfs
+          brew install protobuf git-lfs
           git lfs install
           git lfs pull
+          protoc --version
 
       - name: Rust toolchain
         working-directory: src
