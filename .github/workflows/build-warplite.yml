@@ -98,3 +98,29 @@ jobs:
             src/WarpLite.dmg
           if-no-files-found: error
           retention-days: 14
+      - name: Checksums
+        working-directory: src
+        run: |
+          shasum -a 256 WarpLite.app.zip WarpLite.dmg | tee checksums.txt
+          {
+            echo "SHA256:"
+            echo '```'
+            cat checksums.txt
+            echo '```'
+          } > release-body.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: warplite-${{ github.run_number }}-${{ github.run_id }}
+          name: WarpLite build ${{ github.run_number }}
+          body_path: src/release-body.md
+          files: |
+            src/WarpLite.app.zip
+            src/WarpLite.dmg
+            src/checksums.txt
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
