@@ -1,0 +1,99 @@
+name: Build WarpLite from GitLab
+
+on:
+  repository_dispatch:
+    types: [build-warplite]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "GitLab branch/tag"
+        required: false
+        default: "warp-lite/main"
+  # schedule:
+  #   - cron: "0 6 * * 1"
+
+concurrency:
+  group: warplite-macos
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 180
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: "4"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      GITLAB_REF: ${{ github.event.client_payload.ref || inputs.ref || 'warp-lite/main' }}
+      GITLAB_SHA: ${{ github.event.client_payload.sha || '' }}
+
+    steps:
+      - name: Clone public GitLab source
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$GITLAB_REF" \
+            https://gitlab.com/adatcu/warp-lite.git src \
+            || {
+              git clone --depth 50 https://gitlab.com/adatcu/warp-lite.git src
+              cd src && git checkout "$GITLAB_REF"
+            }
+          cd src
+          if [ -n "${GITLAB_SHA}" ]; then
+            git fetch --depth 1 origin "$GITLAB_SHA"
+            git checkout --force "$GITLAB_SHA"
+          fi
+          echo "Building $(git rev-parse --short HEAD) ($(git log -1 --pretty=%s))"
+
+      - name: Install git-lfs and pull LFS
+        working-directory: src
+        run: |
+          brew install git-lfs
+          git lfs install
+          git lfs pull
+
+      - name: Rust toolchain
+        working-directory: src
+        run: |
+          CHANNEL=$(grep -E '^\s*channel\s*=' rust-toolchain.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          rustup toolchain install "$CHANNEL" --profile minimal
+          rustup default "$CHANNEL"
+          rustc -V && cargo -V
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/target
+          key: warplite-${{ runner.os }}-${{ hashFiles('src/Cargo.lock', 'src/rust-toolchain.toml') }}
+          restore-keys: |
+            warplite-${{ runner.os }}-
+
+      - name: Release build
+        working-directory: src
+        run: |
+          cargo check -p warp --bin warp-oss
+          cargo build --release --bin warp-oss
+
+      - name: Bundle WarpLite.app and DMG
+        working-directory: src
+        run: |
+          script/build-warp-lite-app.sh
+          codesign --verify --deep --strict --verbose=2 WarpLite.app || true
+          rm -f WarpLite.dmg WarpLite.app.zip
+          hdiutil create -volname WarpLite -srcfolder WarpLite.app -ov -format UDZO WarpLite.dmg
+          ditto -c -k --sequesterRsrc --keepParent WarpLite.app WarpLite.app.zip
+          hdiutil verify WarpLite.dmg || true
+          ls -lh WarpLite.app WarpLite.dmg WarpLite.app.zip
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: WarpLite-${{ github.run_number }}
+          path: |
+            src/WarpLite.app.zip
+            src/WarpLite.dmg
+          if-no-files-found: error
+          retention-days: 14
